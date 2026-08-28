@@ -783,6 +783,170 @@
     };
 
     /*
+     Apply positioning styles to an external legend container div.
+     Numeric top/left/bottom values are converted to px; height/width are always px.
+     */
+    nv.utils.styleExternalLegendContainer = function (element, styles) {
+        var el = element;
+        var edgeProps = ['top', 'bottom', 'left'];
+
+        edgeProps.forEach(function (prop) {
+            if (prop in styles) {
+                var val = styles[prop];
+                el = el.style(prop, typeof val === 'number' ? val + 'px' : val);
+            }
+        });
+
+        if ('height' in styles) el = el.style('height', styles.height + 'px');
+        if ('width' in styles) el = el.style('width', styles.width + 'px');
+
+        return el;
+    };
+
+    nv.utils.createLegendTooltip = function (valueFormatter) {
+        return nv.models
+            .tooltip()
+            .classes('nv-legend-tooltip')
+            .headerEnabled(false)
+            .duration(0)
+            .valueFormatter(valueFormatter || function (d) { return d; });
+    };
+
+    nv.utils.bindLegendScrollHide = function (legendElement, legendTooltip) {
+        legendElement.on('scroll', function () {
+            if (!legendTooltip.hidden()) {
+                legendTooltip.hidden(true);
+            }
+        });
+    };
+
+    nv.utils.removeExternalLegend = function (containerEl) {
+        d3.select(containerEl.parentNode).selectAll('.nv-legendContainer').remove();
+    };
+
+    /*
+     Renders a legend in an external div container (pieChart, discreteBarChart).
+     Returns layout dimensions and the legend container element.
+     */
+    nv.utils.renderExternalLegend = function (options) {
+        var legend = options.legend;
+        var legendData = options.data;
+        var containerEl = options.containerEl;
+        var d3Container = options.d3Container;
+        var legendPosition = options.position;
+        var availableWidth = options.availableWidth;
+        var availableHeight = options.availableHeight;
+        var margin = options.margin;
+        var height = options.height;
+        var rightColumnCount = options.rightColumnCount !== undefined ? options.rightColumnCount : 2;
+        var shrinkChartWidth = !!options.shrinkChartWidth;
+        var rightAlign = options.rightAlign;
+        var minChartWidth = options.minChartWidth;
+        var legendTransform = 'translate(0,0)';
+
+        if (minChartWidth === undefined) {
+            minChartWidth = shrinkChartWidth ? Math.floor(availableWidth / 2) : 0;
+        }
+
+        function configureStackedLegend() {
+            legend
+                .width(availableWidth)
+                .height(availableHeight / 2)
+                .columnCount('auto');
+            return availableHeight / 2;
+        }
+
+        var maxLegendWidth;
+        var legendWidth;
+
+        var newLegendWrap = d3.select(containerEl.parentNode);
+        var newLegend = newLegendWrap.append('div').attr('class', 'nv-legendContainer');
+        var newLegendSvg = newLegend.append('svg').attr('class', 'nvd3');
+        newLegendSvg.append('g').attr('class', ' nv-legendWrap');
+
+        nv.utils.initSVG(newLegendSvg);
+
+        if (legendPosition === 'top') {
+            availableHeight = configureStackedLegend();
+
+            nv.utils.styleExternalLegendContainer(newLegend, {
+                top: 0,
+                left: 0,
+                height: availableHeight,
+                width: availableWidth
+            });
+
+        } else if (legendPosition === 'right') {
+            maxLegendWidth = Math.max(0, availableWidth - minChartWidth);
+
+            legend
+                .height(availableHeight)
+                .width(maxLegendWidth)
+                .columnCount(rightColumnCount)
+                .rightAlign(rightAlign !== undefined ? rightAlign : false);
+
+            legendTransform = 'translate(10, 10)';
+
+        } else if (legendPosition === 'bottom') {
+            availableHeight = configureStackedLegend();
+            margin.top = 0;
+
+            nv.utils.styleExternalLegendContainer(newLegend, {
+                bottom: 0,
+                left: 0,
+                height: availableHeight,
+                width: availableWidth
+            });
+        }
+
+        newLegend
+            .select('.nv-legendWrap')
+            .datum(legendData)
+            .call(legend)
+            .attr('transform', legendTransform);
+
+        newLegendSvg.style('height', legend.height() + 20 + 'px');
+
+        if (legendPosition === 'right') {
+            var measuredWidth = legend.layoutWidth();
+            legendWidth = Math.min(maxLegendWidth, Math.ceil(measuredWidth > 0 ? measuredWidth : maxLegendWidth) + 20);
+
+            if (shrinkChartWidth) {
+                availableWidth -= legendWidth;
+            }
+
+            newLegendSvg.style('width', legendWidth + 'px');
+
+            nv.utils.styleExternalLegendContainer(newLegend, {
+                top: 0,
+                left: availableWidth,
+                width: legendWidth
+            });
+        }
+
+        if (legendPosition === 'top' && margin.top != legend.height()) {
+            margin.top = availableHeight;
+            availableHeight = nv.utils.availableHeight(height, d3Container, margin);
+        }
+
+        return {
+            legendElement: newLegend,
+            availableWidth: availableWidth,
+            availableHeight: availableHeight,
+            margin: margin
+        };
+    };
+
+    nv.utils.showLegendTooltipAt = function (legendTooltip, d, seriesData) {
+        legendTooltip.position(function () {
+            var pos = d.element.getBoundingClientRect();
+            return { top: pos.y - 20, left: pos.x + 20 };
+        });
+
+        legendTooltip.data({ series: seriesData }).hidden(false);
+    };
+
+    /*
      Check equality of 2 array
      */
     nv.utils.arrayEquals = function (array1, array2) {

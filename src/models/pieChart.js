@@ -15,16 +15,9 @@ nv.models.pieChart = function() {
             return d;
         });
 
-    var legendTooltip = nv.models
-        .tooltip()
-        .classes('nv-legend-tooltip')
-        .headerEnabled(false)
-        .duration(0)
-        .valueFormatter(function (d, i) {
-            return pie.valueFormat()(d, i);
+    var legendTooltip = nv.utils.createLegendTooltip(function (d, i) {
+        return pie.valueFormat()(d, i);
     });
-
-    d3.selectAll('.nv-legend-tooltip').remove();
 
     var margin = {top: 30, right: 20, bottom: 20, left: 20}
         , width = null
@@ -85,8 +78,6 @@ nv.models.pieChart = function() {
 
             chart.container = this;
             tooltip.chartContainer(chart.container.parentNode);
-            // remove legend container manually as it's not part of the nvd3 svg anymore
-            d3.select(chart.container.parentNode).select('.nv-legendContainer').remove();
 
             state.setter(stateSetter(data), chart.update)
                 .getter(stateGetter(data))
@@ -129,101 +120,37 @@ nv.models.pieChart = function() {
 
             gEnter.append('g').attr('class', 'nv-pieWrap');
 
+            nv.utils.removeExternalLegend(chart.container);
+
             // Legend
+            var newLegend;
             if (showLegend) {
-                    
-                var newLegendWrap = d3.select(chart.container.parentNode);
-                var newLegend = newLegendWrap.append('div').attr('class', 'nv-legendContainer');
-                var newLegendSvg = newLegend.append('svg').attr('class', 'nvd3');
-                newLegendSvg.append('g').attr('class', ' nv-legendWrap');
-
-                nv.utils.initSVG(newLegendSvg);
-
                 legend
                     .updateState(!pie.showChecks())
                     .key(pie.x())
                     .value(pie.y());
 
-                if (legendPosition === "top") {
+                var legendLayout = nv.utils.renderExternalLegend({
+                    legend: legend,
+                    data: data,
+                    containerEl: chart.container,
+                    d3Container: container,
+                    position: legendPosition,
+                    availableWidth: availableWidth,
+                    availableHeight: availableHeight,
+                    margin: margin,
+                    height: height,
+                    rightColumnCount: 'adaptive-fit',
+                    rightAlign: false,
+                    shrinkChartWidth: true
+                });
 
-                    legend
-                        .width(availableWidth)
-                        .height(availableHeight / 2);
-                    
-                    availableHeight = availableHeight / 2;
+                newLegend = legendLayout.legendElement;
+                availableWidth = legendLayout.availableWidth;
+                availableHeight = legendLayout.availableHeight;
+                margin = legendLayout.margin;
 
-                    newLegend
-                        .style('top', '0')
-                        .style('left', '0')
-                        .style('height', availableHeight + 'px')
-                        .style('width', availableWidth + 'px');
-
-                    newLegendWrap
-                        .select('.nv-legendWrap')
-                        .datum(data)
-                        .call(legend)
-                        .attr('transform', 'translate(0,0)');
-
-                    newLegendSvg
-                        .style('height', legend.height() + 20 + 'px'); 
-
-                    if (margin.top != legend.height()) {
-                        margin.top = availableHeight;
-                        availableHeight = nv.utils.availableHeight(height, container, margin);
-                    }
-
-                }
-                
-                if (legendPosition === 'right') {
-                    var legendWidth = nv.models.legend().width();
-
-                    if (availableWidth / 2 < legendWidth) {
-                        legendWidth = (availableWidth / 2)
-                    }
-
-                    legend
-                        .height(availableHeight)
-                        .width(legendWidth)
-                    availableWidth -= legend.width();
-
-                    newLegend
-                        .style('top', '0')
-                        .style('left', availableWidth + 'px')
-                        .style('width', legendWidth + 'px');
-
-                    newLegendWrap.select('.nv-legendWrap')
-                        .datum(data)
-                        .call(legend)
-                        .attr('transform', 'translate(10, 10)');
-
-                    newLegendSvg
-                        .style('height', legend.height() + 20 + 'px'); 
-                }
-
-                if (legendPosition === 'bottom') {
-
-                    legend
-                        .width(availableWidth)
-                        .height(availableHeight / 2);
-
-                    availableHeight = availableHeight / 2;
-                    margin.top = 0;
-
-                    newLegend
-                        .style('bottom', '0')
-                        .style('left', '0')
-                        .style('height', availableHeight + 'px')
-                        .style('width', availableWidth + 'px');
-
-                    newLegendWrap
-                        .select('.nv-legendWrap')
-                        .datum(data)
-                        .call(legend)
-                        .attr('transform', 'translate(0,0)');
-
-                    newLegendSvg
-                        .style('height', legend.height() + 20 + 'px'); 
-                }
+                nv.utils.bindLegendScrollHide(newLegend, legendTooltip);
             }
 
             wrap.attr('transform', 'translate(' + margin.left + ',' + margin.top + ')');
@@ -236,14 +163,6 @@ nv.models.pieChart = function() {
             //============================================================
             // Event Handling/Dispatching (in chart's scope)
             //------------------------------------------------------------
-
-            if(showLegend) {
-                newLegend.on('scroll', function() {
-                    if(!legendTooltip.hidden()) {
-                        legendTooltip.hidden(true);
-                    }
-                });
-            }
 
             legend.dispatch
                 .on('stateChange', function (newState) {
@@ -260,22 +179,13 @@ nv.models.pieChart = function() {
                 })
                 .on('legendMouseover.tooltip', function (d) {
                     if (!showLegendTooltips) return;
-                    d['series'] = {
+
+                    nv.utils.showLegendTooltipAt(legendTooltip, d, {
                         key: d.data[0],
                         value: d.data[1],
                         color: d.color
-                    };
-
-                    var pos = d.element.getBoundingClientRect();
-
-                    legendTooltip.position(function () {
-                        return {
-                            top: pos.y - 20,
-                            left: pos.x + 20
-                        };
                     });
-                    
-                    legendTooltip.data(d).hidden(false);
+
                     pie.sliceExplode({
                         data: d.data,
                         explode: true

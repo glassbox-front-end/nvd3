@@ -1,4 +1,4 @@
-/* nvd3 version 1.9.46 (https://github.com/glassbox-front-end/nvd3) 2024-10-08 */
+/* nvd3 version 1.9.50 (https://github.com/glassbox-front-end/nvd3) 2026-07-02 */
 (function(){
 
 // set up main nv object
@@ -1676,6 +1676,170 @@ nv.models.tooltip = function() {
                 }
             }
         });
+    };
+
+    /*
+     Apply positioning styles to an external legend container div.
+     Numeric top/left/bottom values are converted to px; height/width are always px.
+     */
+    nv.utils.styleExternalLegendContainer = function (element, styles) {
+        var el = element;
+        var edgeProps = ['top', 'bottom', 'left'];
+
+        edgeProps.forEach(function (prop) {
+            if (prop in styles) {
+                var val = styles[prop];
+                el = el.style(prop, typeof val === 'number' ? val + 'px' : val);
+            }
+        });
+
+        if ('height' in styles) el = el.style('height', styles.height + 'px');
+        if ('width' in styles) el = el.style('width', styles.width + 'px');
+
+        return el;
+    };
+
+    nv.utils.createLegendTooltip = function (valueFormatter) {
+        return nv.models
+            .tooltip()
+            .classes('nv-legend-tooltip')
+            .headerEnabled(false)
+            .duration(0)
+            .valueFormatter(valueFormatter || function (d) { return d; });
+    };
+
+    nv.utils.bindLegendScrollHide = function (legendElement, legendTooltip) {
+        legendElement.on('scroll', function () {
+            if (!legendTooltip.hidden()) {
+                legendTooltip.hidden(true);
+            }
+        });
+    };
+
+    nv.utils.removeExternalLegend = function (containerEl) {
+        d3.select(containerEl.parentNode).selectAll('.nv-legendContainer').remove();
+    };
+
+    /*
+     Renders a legend in an external div container (pieChart, discreteBarChart).
+     Returns layout dimensions and the legend container element.
+     */
+    nv.utils.renderExternalLegend = function (options) {
+        var legend = options.legend;
+        var legendData = options.data;
+        var containerEl = options.containerEl;
+        var d3Container = options.d3Container;
+        var legendPosition = options.position;
+        var availableWidth = options.availableWidth;
+        var availableHeight = options.availableHeight;
+        var margin = options.margin;
+        var height = options.height;
+        var rightColumnCount = options.rightColumnCount !== undefined ? options.rightColumnCount : 2;
+        var shrinkChartWidth = !!options.shrinkChartWidth;
+        var rightAlign = options.rightAlign;
+        var minChartWidth = options.minChartWidth;
+        var legendTransform = 'translate(0,0)';
+
+        if (minChartWidth === undefined) {
+            minChartWidth = shrinkChartWidth ? Math.floor(availableWidth / 2) : 0;
+        }
+
+        function configureStackedLegend() {
+            legend
+                .width(availableWidth)
+                .height(availableHeight / 2)
+                .columnCount('auto');
+            return availableHeight / 2;
+        }
+
+        var maxLegendWidth;
+        var legendWidth;
+
+        var newLegendWrap = d3.select(containerEl.parentNode);
+        var newLegend = newLegendWrap.append('div').attr('class', 'nv-legendContainer');
+        var newLegendSvg = newLegend.append('svg').attr('class', 'nvd3');
+        newLegendSvg.append('g').attr('class', ' nv-legendWrap');
+
+        nv.utils.initSVG(newLegendSvg);
+
+        if (legendPosition === 'top') {
+            availableHeight = configureStackedLegend();
+
+            nv.utils.styleExternalLegendContainer(newLegend, {
+                top: 0,
+                left: 0,
+                height: availableHeight,
+                width: availableWidth
+            });
+
+        } else if (legendPosition === 'right') {
+            maxLegendWidth = Math.max(0, availableWidth - minChartWidth);
+
+            legend
+                .height(availableHeight)
+                .width(maxLegendWidth)
+                .columnCount(rightColumnCount)
+                .rightAlign(rightAlign !== undefined ? rightAlign : false);
+
+            legendTransform = 'translate(10, 10)';
+
+        } else if (legendPosition === 'bottom') {
+            availableHeight = configureStackedLegend();
+            margin.top = 0;
+
+            nv.utils.styleExternalLegendContainer(newLegend, {
+                bottom: 0,
+                left: 0,
+                height: availableHeight,
+                width: availableWidth
+            });
+        }
+
+        newLegend
+            .select('.nv-legendWrap')
+            .datum(legendData)
+            .call(legend)
+            .attr('transform', legendTransform);
+
+        newLegendSvg.style('height', legend.height() + 20 + 'px');
+
+        if (legendPosition === 'right') {
+            var measuredWidth = legend.layoutWidth();
+            legendWidth = Math.min(maxLegendWidth, Math.ceil(measuredWidth > 0 ? measuredWidth : maxLegendWidth) + 20);
+
+            if (shrinkChartWidth) {
+                availableWidth -= legendWidth;
+            }
+
+            newLegendSvg.style('width', legendWidth + 'px');
+
+            nv.utils.styleExternalLegendContainer(newLegend, {
+                top: 0,
+                left: availableWidth,
+                width: legendWidth
+            });
+        }
+
+        if (legendPosition === 'top' && margin.top != legend.height()) {
+            margin.top = availableHeight;
+            availableHeight = nv.utils.availableHeight(height, d3Container, margin);
+        }
+
+        return {
+            legendElement: newLegend,
+            availableWidth: availableWidth,
+            availableHeight: availableHeight,
+            margin: margin
+        };
+    };
+
+    nv.utils.showLegendTooltipAt = function (legendTooltip, d, seriesData) {
+        legendTooltip.position(function () {
+            var pos = d.element.getBoundingClientRect();
+            return { top: pos.y - 20, left: pos.x + 20 };
+        });
+
+        legendTooltip.data({ series: seriesData }).hidden(false);
     };
 
     /*
@@ -4200,8 +4364,26 @@ nv.models.discreteBar = function() {
                     })
                 });
 
-            x   .domain(xDomain || d3.merge(seriesData).map(function(d) { return d.x }))
-                .rangeBands(xRange || [0, availableWidth], .1);
+            var categories = xDomain || d3.merge(seriesData).map(function(d) { return d.x });
+            var barGap = 25;
+            var barOffset;
+            var defaultBarWidth;
+
+            x.domain(categories);
+
+            if (xRange) {
+                x.rangeBands(xRange, .1);
+                barOffset = x.rangeBand() * .05;
+                defaultBarWidth = x.rangeBand() * .9 / data.length;
+            } else {
+                var n = categories.length;
+                var bw = barWidth || (n ? Math.max(0, (availableWidth - (n - 1) * barGap) / n) : 0);
+                var step = bw + barGap;
+                x.rangeBands([0, n * step], barGap / step);
+                barOffset = 0;
+                defaultBarWidth = x.rangeBand();
+            }
+
             y   .domain(yDomain || d3.extent(d3.merge(seriesData).map(function(d) { return d.y }).concat(forceY)));
 
             // If showValues, pad the Y axis range to account for label height
@@ -4246,7 +4428,7 @@ nv.models.discreteBar = function() {
 
             var barsEnter = bars.enter().append('g')
                 .attr('transform', function(d,i,j) {
-                    return 'translate(' + (x(getX(d,i)) + x.rangeBand() * .05 ) + ', ' + y(0) + ')'
+                    return 'translate(' + (x(getX(d,i)) + barOffset) + ', ' + y(0) + ')'
                 })
                 .on('mouseover', function(d,i) { //TODO: figure out why j works above, but not here
                     d3.select(this).classed('hover', true);
@@ -4297,7 +4479,7 @@ nv.models.discreteBar = function() {
 
             barsEnter.append('rect')
                 .attr('height', 0)
-                .attr('width', x.rangeBand() * .9 / data.length )
+                .attr('width', defaultBarWidth)
 
             if ( showChecks ) {
                 barsEnter.filter(function(d,i,j){
@@ -4316,7 +4498,7 @@ nv.models.discreteBar = function() {
                 bars.select('text')
                     .text(function(d,i) { return valueFormat(getY(d,i)) })
                     .watchTransition(renderWatch, 'discreteBar: bars text')
-                    .attr('x', barWidth ? barWidth/2 : (x.rangeBand() * .9 / 2) )
+                    .attr('x', barWidth ? barWidth/2 : defaultBarWidth / 2)
                     .attr('y', function(d,i) { return getY(d,i) < 0 ? y(getY(d,i)) - y(0) + 12 : /*Math.max(Math.abs(y(getY(d,i)) - y(0)), 1)*/ - 4 })
 
                 ;
@@ -4333,7 +4515,7 @@ nv.models.discreteBar = function() {
                 .select('rect')
                 .attr('class', rectClass)
                 .watchTransition(renderWatch, 'discreteBar: bars rect')
-                .attr('width', barWidth || x.rangeBand() * .9 / data.length);
+                .attr('width', barWidth || defaultBarWidth);
 
             if (barColor) {
 
@@ -4345,7 +4527,7 @@ nv.models.discreteBar = function() {
             bars.watchTransition(renderWatch, 'discreteBar: bars')
                 //.delay(function(d,i) { return i * 1200 / data[0].values.length })
                 .attr('transform', function(d,i) {
-                    var left = x(getX(d,i)) + x.rangeBand() * .05,
+                    var left = x(getX(d,i)) + barOffset,
                         top = getY(d,i) < 0 ?
                             y(0) :
                                 y(0) - y(getY(d,i)) < 1 ?
@@ -4434,11 +4616,14 @@ nv.models.discreteBarChart = function() {
         , tooltip = nv.models.tooltip()
         ;
 
+    var legendTooltip = nv.utils.createLegendTooltip(function (d, i) { return d; });
+
     var margin = {top: 15, right: 10, bottom: 50, left: 60}
         , width = null
         , height = null
         , color = nv.utils.getColor()
 	, showLegend = false
+        , legendPosition = 'right'
         , showXAxis = true
         , showYAxis = true
         , rightAlignYAxis = false
@@ -4450,7 +4635,10 @@ nv.models.discreteBarChart = function() {
         , noData = null
         , dispatch = d3.dispatch('beforeUpdate','renderEnd', 'selectChange')
         , duration = 250
+        , showLegendTooltips = true
         ;
+
+    legend.showNativeTooltip(false);
 
     xAxis
         .orient('bottom')
@@ -4477,6 +4665,29 @@ nv.models.discreteBarChart = function() {
     //------------------------------------------------------------
 
     var renderWatch = nv.utils.renderWatch(dispatch, duration);
+
+    function buildLegendData(data) {
+        var seriesData = data.filter(function(d) { return !d.disabled; });
+        var barValues = seriesData.length ? seriesData[0].values : [];
+
+        return barValues.map(function(bar, i) {
+            return {
+                key: discretebar.x()(bar),
+                value: discretebar.y()(bar),
+                color: color(bar, i),
+                data: bar,
+                disabled: false,
+                selected: !!bar.selected
+            };
+        });
+    }
+
+    function calcMinBarChartWidth(barCount) {
+        var barGap = 25;
+        var minBarWidth = 25;
+
+        return barCount > 0 ? barCount * minBarWidth + (barCount - 1) * barGap : 40;
+    }
 
     function chart(selection) {
         renderWatch.reset();
@@ -4510,6 +4721,75 @@ nv.models.discreteBarChart = function() {
             x = discretebar.xScale();
             y = discretebar.yScale().clamp(true);
 
+            nv.utils.removeExternalLegend(chart.container);
+
+            // Legend
+            var newLegend;
+            if (showLegend) {
+                var legendData = buildLegendData(data);
+                var barDataTotal = legendData.reduce(function(acc, d) {
+                    return acc + d.value;
+                }, 0);
+
+                legend
+                    .updateState(!discretebar.showChecks())
+                    .key(function(d) { return d.key; })
+                    .value(function(d) { return d.value; });
+
+                var legendLayout = nv.utils.renderExternalLegend({
+                    legend: legend,
+                    data: legendData,
+                    containerEl: chart.container,
+                    d3Container: container,
+                    position: legendPosition,
+                    availableWidth: availableWidth,
+                    availableHeight: availableHeight,
+                    margin: margin,
+                    height: height,
+                    rightColumnCount: 'adaptive',
+                    rightAlign: false,
+                    shrinkChartWidth: legendPosition === 'right',
+                    minChartWidth: legendPosition === 'right'
+                        ? calcMinBarChartWidth(legendData.length)
+                        : undefined
+                });
+
+                newLegend = legendLayout.legendElement;
+                availableWidth = legendLayout.availableWidth;
+                availableHeight = legendLayout.availableHeight;
+                margin = legendLayout.margin;
+
+                nv.utils.bindLegendScrollHide(newLegend, legendTooltip);
+
+                legend.dispatch
+                    .on('legendClick', function(d, i) {
+                        d.data.selected = !d.data.selected;
+                        d.selected = d.data.selected;
+                        dispatch.selectChange({
+                            data: d.data,
+                            index: i,
+                            color: d.color
+                        });
+                        legendTooltip.hidden(true);
+                    })
+                    .on('legendMouseover.tooltip', function(d) {
+                        if (!showLegendTooltips) return;
+                        var percentage = barDataTotal
+                            ? d3.format('.0%')(d.data.value / barDataTotal)
+                            : d.data.value;
+
+                        nv.utils.showLegendTooltipAt(legendTooltip, d, {
+                            key: d.data.key,
+                            value: percentage,
+                            color: d.color
+                        });
+                    })
+                    .on('legendMouseout.tooltip', function() {
+                        if (!showLegendTooltips) return;
+                        legendTooltip.hidden(true);
+                    });
+            }
+
             // Setup containers and skeleton of chart
             var wrap = container.selectAll('g.nv-wrap.nv-discreteBarWithAxes').data([data]);
             var gEnter = wrap.enter().append('g').attr('class', 'nvd3 nv-wrap nv-discreteBarWithAxes').append('g');
@@ -4522,30 +4802,8 @@ nv.models.discreteBarChart = function() {
                 .append('line');
 
             gEnter.append('g').attr('class', 'nv-barsWrap');
-	    gEnter.append('g').attr('class', 'nv-legendWrap');
 
             g.attr('transform', 'translate(' + margin.left + ',' + margin.top + ')');
-	    
-            if (showLegend) {
-                legend.width(availableWidth);
-
-                g.select('.nv-legendWrap')
-                    .datum(data)
-                    .call(legend);
-
-                if ( margin.top != legend.height()) {
-                    margin.top = legend.height();
-                    availableHeight = nv.utils.availableHeight(height, container, margin);
-                }
-
-                wrap.select('.nv-legendWrap')
-                    .attr('transform', 'translate(0,' + (-margin.top) +')')
-            }
-            
-            if (rightAlignYAxis) {
-                g.select(".nv-y.nv-axis")
-                    .attr("transform", "translate(" + availableWidth + ",0)");
-            }	    
 
             if (rightAlignYAxis) {
                 g.select(".nv-y.nv-axis")
@@ -4669,6 +4927,24 @@ nv.models.discreteBarChart = function() {
         width:      {get: function(){return width;}, set: function(_){width=_;}},
         height:     {get: function(){return height;}, set: function(_){height=_;}},
         showLegend: {get: function(){return showLegend;}, set: function(_){showLegend=_;}},
+        legendPosition: {get: function(){return legendPosition;}, set: function(_){legendPosition=_;}},
+        keyFormat:  {get: function(){return legend.keyFormat();}, set: function(_){legend.keyFormat(_);}},
+        showLegendValues: {
+            get: function() {
+                return legend.showLegendValues();
+            },
+            set: function(_) {
+                legend.showLegendValues(_);
+            }
+        },
+        showLegendTooltips: {
+            get: function() {
+                return showLegendTooltips;
+            },
+            set: function(_) {
+                showLegendTooltips = _;
+            }
+        },
         staggerLabels: {get: function(){return staggerLabels;}, set: function(_){staggerLabels=_;}},
         rotateLabels:  {get: function(){return rotateLabels;}, set: function(_){rotateLabels=_;}},
         wrapLabels:  {get: function(){return wrapLabels;}, set: function(_){wrapLabels=!!_;}},
@@ -8067,7 +8343,9 @@ nv.models.legend = function() {
             return d.value;
         }
         , showLegendValues = false
-        , showNativeTooltip = true;
+        , showNativeTooltip = true
+        , columnCount = 'auto'
+        , lastLayoutWidth = 0;
 
     function chart(selection) {
         selection.each(function(data) {
@@ -8267,10 +8545,15 @@ nv.models.legend = function() {
             if(showLegendValues) {
                 series.each(function(d) {
                     var legendTextLength = d3.select(this).select('text.nv-legend-text').node().getComputedTextLength();
+                    var valueText = d3.select(this).select('text.nv-legend-text-value');
 
-                    d3.select(this)
-                        .append('text')
-                        .attr('class', 'nv-legend-text-value')
+                    if (valueText.empty()) {
+                        valueText = d3.select(this)
+                            .append('text')
+                            .attr('class', 'nv-legend-text-value');
+                    }
+
+                    valueText
                         .attr('fill', '#6A7379')
                         .attr('text-anchor', 'start')
                         .attr('dy', '.32em')
@@ -8282,6 +8565,7 @@ nv.models.legend = function() {
             //TODO: implement fixed-width and max-width options (max-width is especially useful with the align option)
             // NEW ALIGNING CODE, TODO: clean up
             var legendWidth = 0;
+            var maxwidth = 0;
             if (align) {
                 seriesShape;
                 var seriesWidths = [];
@@ -8313,7 +8597,11 @@ nv.models.legend = function() {
                     }
 
                     if (showNativeTooltip) {
-                        d3.select(this).append('svg:title').text(k);
+                        var titleEl = d3.select(this).select('title');
+                        if (titleEl.empty()) {
+                            titleEl = d3.select(this).append('svg:title');
+                        }
+                        titleEl.text(k);
                     }
 
                     var nodeTextLength;
@@ -8326,31 +8614,68 @@ nv.models.legend = function() {
                         nodeTextLength = nv.utils.calcApproxTextWidth(legendText);
                     }
 
-                    seriesWidths.push(nodeTextLength + padding + 18);
+                    var entryWidth = nodeTextLength + padding + 18;
+
+                    if (showLegendValues) {
+                        var valueNode = d3.select(this).select('text.nv-legend-text-value').node();
+                        if (valueNode) {
+                            entryWidth += valueNode.getComputedTextLength() + 12;
+                        }
+                    }
+
+                    seriesWidths.push(entryWidth);
                 });
 
                 var seriesPerRow = 0;
                 var columnWidths = [];
                 legendWidth = 0;
 
-                while ( legendWidth < availableWidth && seriesPerRow < seriesWidths.length) {
-                    columnWidths[seriesPerRow] = seriesWidths[seriesPerRow];
-                    legendWidth += seriesWidths[seriesPerRow++];
-                }
-                if (seriesPerRow === 0) seriesPerRow = 1; //minimum of one series per row
-
-                while ( legendWidth > availableWidth && seriesPerRow > 1 ) {
-                    columnWidths = [];
-                    seriesPerRow--;
-
+                var buildFixedColumnLayout = function (perRow) {
+                    var widths = [];
                     for (var k = 0; k < seriesWidths.length; k++) {
-                        if (seriesWidths[k] > (columnWidths[k % seriesPerRow] || 0) )
-                            columnWidths[k % seriesPerRow] = seriesWidths[k];
+                        if (seriesWidths[k] > (widths[k % perRow] || 0))
+                            widths[k % perRow] = seriesWidths[k];
+                    }
+                    return {
+                        seriesPerRow: perRow,
+                        columnWidths: widths,
+                        legendWidth: widths.reduce(function(prev, cur) { return prev + cur; }, 0)
+                    };
+                };
+
+                if (columnCount === 'adaptive' || columnCount === 'adaptive-fit' || (typeof columnCount === 'number' && columnCount > 0)) {
+                    var perRow;
+
+                    if (columnCount === 'adaptive' || columnCount === 'adaptive-fit') {
+                        var singleColHeight = margin.top + margin.bottom + seriesWidths.length * versPadding;
+                        perRow = (seriesWidths.length <= 1 || singleColHeight <= height) ? 1 : 2;
+                        if (perRow === 2) {
+                            var twoColLayout = buildFixedColumnLayout(2);
+                            if (twoColLayout.legendWidth > availableWidth) {
+                                perRow = 1;
+                            }
+                        }
+                    } else {
+                        perRow = Math.min(columnCount, seriesWidths.length) || 1;
                     }
 
-                    legendWidth = columnWidths.reduce(function(prev, cur, index, array) {
-                        return prev + cur;
-                    });
+                    var layout = buildFixedColumnLayout(perRow);
+                    seriesPerRow = layout.seriesPerRow;
+                    columnWidths = layout.columnWidths;
+                    legendWidth = layout.legendWidth;
+                } else {
+                    while ( legendWidth < availableWidth && seriesPerRow < seriesWidths.length) {
+                        columnWidths[seriesPerRow] = seriesWidths[seriesPerRow];
+                        legendWidth += seriesWidths[seriesPerRow++];
+                    }
+                    if (seriesPerRow === 0) seriesPerRow = 1; //minimum of one series per row
+
+                    while ( legendWidth > availableWidth && seriesPerRow > 1 ) {
+                        seriesPerRow--;
+                        var shrunkLayout = buildFixedColumnLayout(seriesPerRow);
+                        columnWidths = shrunkLayout.columnWidths;
+                        legendWidth = shrunkLayout.legendWidth;
+                    }
                 }
 
                 var xPositions = [];
@@ -8366,7 +8691,7 @@ nv.models.legend = function() {
 
                 //position legend as far right as possible within the total width
                 if (rightAlign) {
-                    g.attr('transform', 'translate(' + (width - margin.right - legendWidth) / 2 + ',' + margin.top + ')');
+                    g.attr('transform', 'translate(' + Math.max(0, (width - margin.right - legendWidth) / 2) + ',' + margin.top + ')');
                 }
                 else {
                     g.attr('transform', 'translate(0' + ',' + margin.top + ')');
@@ -8378,7 +8703,6 @@ nv.models.legend = function() {
 
                 var ypos = 5,
                     newxpos = 5,
-                    maxwidth = 0,
                     xpos;
                 series
                     .attr('transform', function(d, i) {
@@ -8439,6 +8763,8 @@ nv.models.legend = function() {
                 .style('fill', setBGColor)
                 .style('fill-opacity', setBGOpacity)
                 .style('stroke', setBGColor);
+
+            lastLayoutWidth = align ? legendWidth : maxwidth;
         });
 
         function getPercentageValue(d, series) {
@@ -8487,6 +8813,7 @@ nv.models.legend = function() {
 
     chart.dispatch = dispatch;
     chart.options = nv.utils.optionsFunc.bind(chart);
+    chart.layoutWidth = function() { return lastLayoutWidth; };
 
     chart._options = Object.create({}, {
         // simple options, just get/set the necessary values
@@ -8524,6 +8851,14 @@ nv.models.legend = function() {
             },
             set: function (_) {
                 showNativeTooltip = _;
+            }
+        },
+        columnCount: {
+            get: function () {
+                return columnCount;
+            },
+            set: function (_) {
+                columnCount = _;
             }
         },
         // options that require extra logic in the setter
@@ -13946,18 +14281,21 @@ nv.models.parallelCoordinatesChart = function () {
      
                     var selectedData = getSelectedData();
                     if (!d.data.previous && !selectedData.length) {
+                        var width = chart.width();
+                        var height = chart.height();
+
                         pieInfo
                             .select('.ref text')
                             .text('Click to filter');
 
-                        if((Math.min(availableWidth, availableHeight)) * donutRatio < 100) {
+                        if((Math.min(width, height)) * donutRatio < 100) {
                             pieInfo
                                 .select('.ref text')
                                 .attr('transform', 'translate(0, -4)')
                                 .style("font-size", "10px")
                         }
 
-                        pieInfo.attr('transform', 'translate(' + availableWidth / 2 + ',' + availableHeight / 2 + ')');
+                        pieInfo.attr('transform', 'translate(' + width / 2 + ',' + height / 2 + ')');
                     }
                 }
 
@@ -13980,7 +14318,7 @@ nv.models.parallelCoordinatesChart = function () {
                 }
 
                 donutInfo();
-                pieInfo.attr('transform', 'translate(' + availableWidth / 2 + ',' + availableHeight / 2 + ')');
+                pieInfo.attr('transform', 'translate(' + chart.width() / 2 + ',' + chart.height() / 2 + ')');
                 dispatch.elementMouseout({data: d.data, index: i, element: this});
             });
             ae.on('mousemove', function(d, i) {
@@ -14030,7 +14368,8 @@ nv.models.parallelCoordinatesChart = function () {
             function pieInfoTextWrap() {
                 var self = d3.select(this),
                     textLength = self.node().getComputedTextLength(),
-                    text = self.text();
+                    text = self.text(),
+                    radius = Math.min(chart.width(), chart.height()) / 2;
                 while (textLength > radius - 8 && text.length > 0) {
                     text = text.slice(0, -1);
                     self.text(text + '...');
@@ -14359,16 +14698,9 @@ nv.models.pieChart = function() {
             return d;
         });
 
-    var legendTooltip = nv.models
-        .tooltip()
-        .classes('nv-legend-tooltip')
-        .headerEnabled(false)
-        .duration(0)
-        .valueFormatter(function (d, i) {
-            return pie.valueFormat()(d, i);
+    var legendTooltip = nv.utils.createLegendTooltip(function (d, i) {
+        return pie.valueFormat()(d, i);
     });
-
-    d3.selectAll('.nv-legend-tooltip').remove();
 
     var margin = {top: 30, right: 20, bottom: 20, left: 20}
         , width = null
@@ -14429,8 +14761,6 @@ nv.models.pieChart = function() {
 
             chart.container = this;
             tooltip.chartContainer(chart.container.parentNode);
-            // remove legend container manually as it's not part of the nvd3 svg anymore
-            d3.select(chart.container.parentNode).select('.nv-legendContainer').remove();
 
             state.setter(stateSetter(data), chart.update)
                 .getter(stateGetter(data))
@@ -14473,101 +14803,37 @@ nv.models.pieChart = function() {
 
             gEnter.append('g').attr('class', 'nv-pieWrap');
 
+            nv.utils.removeExternalLegend(chart.container);
+
             // Legend
+            var newLegend;
             if (showLegend) {
-                    
-                var newLegendWrap = d3.select(chart.container.parentNode);
-                var newLegend = newLegendWrap.append('div').attr('class', 'nv-legendContainer');
-                var newLegendSvg = newLegend.append('svg').attr('class', 'nvd3');
-                newLegendSvg.append('g').attr('class', ' nv-legendWrap');
-
-                nv.utils.initSVG(newLegendSvg);
-
                 legend
                     .updateState(!pie.showChecks())
                     .key(pie.x())
                     .value(pie.y());
 
-                if (legendPosition === "top") {
+                var legendLayout = nv.utils.renderExternalLegend({
+                    legend: legend,
+                    data: data,
+                    containerEl: chart.container,
+                    d3Container: container,
+                    position: legendPosition,
+                    availableWidth: availableWidth,
+                    availableHeight: availableHeight,
+                    margin: margin,
+                    height: height,
+                    rightColumnCount: 'adaptive-fit',
+                    rightAlign: false,
+                    shrinkChartWidth: true
+                });
 
-                    legend
-                        .width(availableWidth)
-                        .height(availableHeight / 2);
-                    
-                    availableHeight = availableHeight / 2;
+                newLegend = legendLayout.legendElement;
+                availableWidth = legendLayout.availableWidth;
+                availableHeight = legendLayout.availableHeight;
+                margin = legendLayout.margin;
 
-                    newLegend
-                        .style('top', '0')
-                        .style('left', '0')
-                        .style('height', availableHeight + 'px')
-                        .style('width', availableWidth + 'px');
-
-                    newLegendWrap
-                        .select('.nv-legendWrap')
-                        .datum(data)
-                        .call(legend)
-                        .attr('transform', 'translate(0,0)');
-
-                    newLegendSvg
-                        .style('height', legend.height() + 20 + 'px'); 
-
-                    if (margin.top != legend.height()) {
-                        margin.top = availableHeight;
-                        availableHeight = nv.utils.availableHeight(height, container, margin);
-                    }
-
-                }
-                
-                if (legendPosition === 'right') {
-                    var legendWidth = nv.models.legend().width();
-
-                    if (availableWidth / 2 < legendWidth) {
-                        legendWidth = (availableWidth / 2)
-                    }
-
-                    legend
-                        .height(availableHeight)
-                        .width(legendWidth)
-                    availableWidth -= legend.width();
-
-                    newLegend
-                        .style('top', '0')
-                        .style('left', availableWidth + 'px')
-                        .style('width', legendWidth + 'px');
-
-                    newLegendWrap.select('.nv-legendWrap')
-                        .datum(data)
-                        .call(legend)
-                        .attr('transform', 'translate(10, 10)');
-
-                    newLegendSvg
-                        .style('height', legend.height() + 20 + 'px'); 
-                }
-
-                if (legendPosition === 'bottom') {
-
-                    legend
-                        .width(availableWidth)
-                        .height(availableHeight / 2);
-
-                    availableHeight = availableHeight / 2;
-                    margin.top = 0;
-
-                    newLegend
-                        .style('bottom', '0')
-                        .style('left', '0')
-                        .style('height', availableHeight + 'px')
-                        .style('width', availableWidth + 'px');
-
-                    newLegendWrap
-                        .select('.nv-legendWrap')
-                        .datum(data)
-                        .call(legend)
-                        .attr('transform', 'translate(0,0)');
-
-                    newLegendSvg
-                        .style('height', legend.height() + 20 + 'px'); 
-                }
+                nv.utils.bindLegendScrollHide(newLegend, legendTooltip);
             }
 
             wrap.attr('transform', 'translate(' + margin.left + ',' + margin.top + ')');
@@ -14580,14 +14846,6 @@ nv.models.pieChart = function() {
             //============================================================
             // Event Handling/Dispatching (in chart's scope)
             //------------------------------------------------------------
-
-            if(showLegend) {
-                newLegend.on('scroll', function() {
-                    if(!legendTooltip.hidden()) {
-                        legendTooltip.hidden(true);
-                    }
-                });
-            }
 
             legend.dispatch
                 .on('stateChange', function (newState) {
@@ -14604,22 +14862,13 @@ nv.models.pieChart = function() {
                 })
                 .on('legendMouseover.tooltip', function (d) {
                     if (!showLegendTooltips) return;
-                    d['series'] = {
+
+                    nv.utils.showLegendTooltipAt(legendTooltip, d, {
                         key: d.data[0],
                         value: d.data[1],
                         color: d.color
-                    };
-
-                    var pos = d.element.getBoundingClientRect();
-
-                    legendTooltip.position(function () {
-                        return {
-                            top: pos.y - 20,
-                            left: pos.x + 20
-                        };
                     });
-                    
-                    legendTooltip.data(d).hidden(false);
+
                     pie.sliceExplode({
                         data: d.data,
                         explode: true
@@ -19600,5 +19849,5 @@ nv.models.wordcloudChart = function() {
     return chart;
 };
 
-nv.version = "1.9.46";
+nv.version = "1.9.50";
 })();

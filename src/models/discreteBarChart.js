@@ -13,11 +13,14 @@ nv.models.discreteBarChart = function() {
         , tooltip = nv.models.tooltip()
         ;
 
+    var legendTooltip = nv.utils.createLegendTooltip(function (d, i) { return d; });
+
     var margin = {top: 15, right: 10, bottom: 50, left: 60}
         , width = null
         , height = null
         , color = nv.utils.getColor()
 	, showLegend = false
+        , legendPosition = 'right'
         , showXAxis = true
         , showYAxis = true
         , rightAlignYAxis = false
@@ -29,7 +32,10 @@ nv.models.discreteBarChart = function() {
         , noData = null
         , dispatch = d3.dispatch('beforeUpdate','renderEnd', 'selectChange')
         , duration = 250
+        , showLegendTooltips = true
         ;
+
+    legend.showNativeTooltip(false);
 
     xAxis
         .orient('bottom')
@@ -56,6 +62,29 @@ nv.models.discreteBarChart = function() {
     //------------------------------------------------------------
 
     var renderWatch = nv.utils.renderWatch(dispatch, duration);
+
+    function buildLegendData(data) {
+        var seriesData = data.filter(function(d) { return !d.disabled; });
+        var barValues = seriesData.length ? seriesData[0].values : [];
+
+        return barValues.map(function(bar, i) {
+            return {
+                key: discretebar.x()(bar),
+                value: discretebar.y()(bar),
+                color: color(bar, i),
+                data: bar,
+                disabled: false,
+                selected: !!bar.selected
+            };
+        });
+    }
+
+    function calcMinBarChartWidth(barCount) {
+        var barGap = 25;
+        var minBarWidth = 25;
+
+        return barCount > 0 ? barCount * minBarWidth + (barCount - 1) * barGap : 40;
+    }
 
     function chart(selection) {
         renderWatch.reset();
@@ -89,6 +118,75 @@ nv.models.discreteBarChart = function() {
             x = discretebar.xScale();
             y = discretebar.yScale().clamp(true);
 
+            nv.utils.removeExternalLegend(chart.container);
+
+            // Legend
+            var newLegend;
+            if (showLegend) {
+                var legendData = buildLegendData(data);
+                var barDataTotal = legendData.reduce(function(acc, d) {
+                    return acc + d.value;
+                }, 0);
+
+                legend
+                    .updateState(!discretebar.showChecks())
+                    .key(function(d) { return d.key; })
+                    .value(function(d) { return d.value; });
+
+                var legendLayout = nv.utils.renderExternalLegend({
+                    legend: legend,
+                    data: legendData,
+                    containerEl: chart.container,
+                    d3Container: container,
+                    position: legendPosition,
+                    availableWidth: availableWidth,
+                    availableHeight: availableHeight,
+                    margin: margin,
+                    height: height,
+                    rightColumnCount: 'adaptive',
+                    rightAlign: false,
+                    shrinkChartWidth: legendPosition === 'right',
+                    minChartWidth: legendPosition === 'right'
+                        ? calcMinBarChartWidth(legendData.length)
+                        : undefined
+                });
+
+                newLegend = legendLayout.legendElement;
+                availableWidth = legendLayout.availableWidth;
+                availableHeight = legendLayout.availableHeight;
+                margin = legendLayout.margin;
+
+                nv.utils.bindLegendScrollHide(newLegend, legendTooltip);
+
+                legend.dispatch
+                    .on('legendClick', function(d, i) {
+                        d.data.selected = !d.data.selected;
+                        d.selected = d.data.selected;
+                        dispatch.selectChange({
+                            data: d.data,
+                            index: i,
+                            color: d.color
+                        });
+                        legendTooltip.hidden(true);
+                    })
+                    .on('legendMouseover.tooltip', function(d) {
+                        if (!showLegendTooltips) return;
+                        var percentage = barDataTotal
+                            ? d3.format('.0%')(d.data.value / barDataTotal)
+                            : d.data.value;
+
+                        nv.utils.showLegendTooltipAt(legendTooltip, d, {
+                            key: d.data.key,
+                            value: percentage,
+                            color: d.color
+                        });
+                    })
+                    .on('legendMouseout.tooltip', function() {
+                        if (!showLegendTooltips) return;
+                        legendTooltip.hidden(true);
+                    });
+            }
+
             // Setup containers and skeleton of chart
             var wrap = container.selectAll('g.nv-wrap.nv-discreteBarWithAxes').data([data]);
             var gEnter = wrap.enter().append('g').attr('class', 'nvd3 nv-wrap nv-discreteBarWithAxes').append('g');
@@ -101,30 +199,8 @@ nv.models.discreteBarChart = function() {
                 .append('line');
 
             gEnter.append('g').attr('class', 'nv-barsWrap');
-	    gEnter.append('g').attr('class', 'nv-legendWrap');
 
             g.attr('transform', 'translate(' + margin.left + ',' + margin.top + ')');
-	    
-            if (showLegend) {
-                legend.width(availableWidth);
-
-                g.select('.nv-legendWrap')
-                    .datum(data)
-                    .call(legend);
-
-                if ( margin.top != legend.height()) {
-                    margin.top = legend.height();
-                    availableHeight = nv.utils.availableHeight(height, container, margin);
-                }
-
-                wrap.select('.nv-legendWrap')
-                    .attr('transform', 'translate(0,' + (-margin.top) +')')
-            }
-            
-            if (rightAlignYAxis) {
-                g.select(".nv-y.nv-axis")
-                    .attr("transform", "translate(" + availableWidth + ",0)");
-            }	    
 
             if (rightAlignYAxis) {
                 g.select(".nv-y.nv-axis")
@@ -248,6 +324,24 @@ nv.models.discreteBarChart = function() {
         width:      {get: function(){return width;}, set: function(_){width=_;}},
         height:     {get: function(){return height;}, set: function(_){height=_;}},
         showLegend: {get: function(){return showLegend;}, set: function(_){showLegend=_;}},
+        legendPosition: {get: function(){return legendPosition;}, set: function(_){legendPosition=_;}},
+        keyFormat:  {get: function(){return legend.keyFormat();}, set: function(_){legend.keyFormat(_);}},
+        showLegendValues: {
+            get: function() {
+                return legend.showLegendValues();
+            },
+            set: function(_) {
+                legend.showLegendValues(_);
+            }
+        },
+        showLegendTooltips: {
+            get: function() {
+                return showLegendTooltips;
+            },
+            set: function(_) {
+                showLegendTooltips = _;
+            }
+        },
         staggerLabels: {get: function(){return staggerLabels;}, set: function(_){staggerLabels=_;}},
         rotateLabels:  {get: function(){return rotateLabels;}, set: function(_){rotateLabels=_;}},
         wrapLabels:  {get: function(){return wrapLabels;}, set: function(_){wrapLabels=!!_;}},

@@ -202,18 +202,21 @@ nv.models.pie = function() {
      
                     var selectedData = getSelectedData();
                     if (!d.data.previous && !selectedData.length) {
+                        var width = chart.width();
+                        var height = chart.height();
+
                         pieInfo
                             .select('.ref text')
                             .text('Click to filter');
 
-                        if((Math.min(availableWidth, availableHeight)) * donutRatio < 100) {
+                        if((Math.min(width, height)) * donutRatio < 100) {
                             pieInfo
                                 .select('.ref text')
                                 .attr('transform', 'translate(0, -4)')
                                 .style("font-size", "10px")
                         }
 
-                        pieInfo.attr('transform', 'translate(' + availableWidth / 2 + ',' + availableHeight / 2 + ')');
+                        pieInfo.attr('transform', 'translate(' + width / 2 + ',' + height / 2 + ')');
                     }
                 }
 
@@ -236,7 +239,7 @@ nv.models.pie = function() {
                 }
 
                 donutInfo();
-                pieInfo.attr('transform', 'translate(' + availableWidth / 2 + ',' + availableHeight / 2 + ')');
+                pieInfo.attr('transform', 'translate(' + chart.width() / 2 + ',' + chart.height() / 2 + ')');
                 dispatch.elementMouseout({data: d.data, index: i, element: this});
             });
             ae.on('mousemove', function(d, i) {
@@ -286,7 +289,8 @@ nv.models.pie = function() {
             function pieInfoTextWrap() {
                 var self = d3.select(this),
                     textLength = self.node().getComputedTextLength(),
-                    text = self.text();
+                    text = self.text(),
+                    radius = Math.min(chart.width(), chart.height()) / 2;
                 while (textLength > radius - 8 && text.length > 0) {
                     text = text.slice(0, -1);
                     self.text(text + '...');
